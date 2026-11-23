@@ -247,8 +247,28 @@ TS.dom.on('#ext-sb .sb-item', 'click', function (node) {
 // Меню — с главной и из сетки каталога (куда ведут плитки категорий): «влево» с края
 var MENU_SCREENS = { home: 1, catalog: 1 };
 
+// В сетке каталога «влево» с первой колонки не упирается в край, а переносит фокус на
+// последнюю карточку ряда выше (moved: true) — край там есть только у самой первой
+// карточки. Узнаём перенос по тому, что «влево» увело фокус ВПРАВО: возвращаем его на
+// прежнюю карточку и открываем меню
+var lastCatalogFocus = null;
+
+function wrappedLeft(e) {
+  var was = lastCatalogFocus, now = e.focused;
+  return e.screen === 'catalog' && e.key === 'left' && e.moved && was && was.rect &&
+    now && now.rect && now.rect.x > was.rect.x + 5;
+}
+
 TS.on('nav', function (e) {
-  if (menu || !MENU_SCREENS[e.screen] || e.key !== 'left' || e.moved) return;
+  if (menu) return;
+  if (wrappedLeft(e)) {
+    var back = lastCatalogFocus;
+    lastCatalogFocus = null;
+    TS.dom.focus(back.h).then(open, open);
+    return;
+  }
+  lastCatalogFocus = e.screen === 'catalog' ? e.focused : null;
+  if (!MENU_SCREENS[e.screen] || e.key !== 'left' || e.moved) return;
   open();
 });
 
