@@ -53,7 +53,11 @@ TS.ui.addStyle([
   ' background:#fff!important;color:#000!important;border-radius:.45em;box-shadow:0 0 0 .4em #fff!important}',
   'body #home-topbar .home-nav-btn.focused i,body #detail-view .home-nav-btn.focused i{color:#000!important}',
   'body #home-topbar .home-nav-btn.home-nav-icon.focused,body #detail-view .home-nav-btn.home-nav-icon.focused{',
-  ' border-radius:50%;border-color:#fff!important;box-shadow:none!important}'
+  ' border-radius:50%;border-color:#fff!important;box-shadow:none!important}',
+  // Текущий раздел — всегда виден: полупрозрачная белая плашка (фокус — сплошная)
+  'body #home-topbar .home-nav-btn.active:not(.focused),body #detail-view .home-nav-btn.active:not(.focused){',
+  ' color:#fff!important;background:rgba(255,255,255,.2)!important;border-radius:.45em;',
+  ' box-shadow:0 0 0 .4em rgba(255,255,255,.2)!important}'
 ].join('\n'));
 
 var menu = null;        // { root, list, items, sel }
@@ -199,6 +203,8 @@ function close(go) {
   menu = null;
   TS.keys.capture(false);
   TS.dom.remove(m.root);
+  // Фокус снова на плитке главной (тот же или в выбранной подборке) — сетке нужен пульт
+  setTimeout(armGrid, 450);
   if (!go) return;
   var it = m.items[m.sel];
   if (!it || !it.h) return;
@@ -244,42 +250,177 @@ TS.dom.on('#ext-sb .sb-item', 'click', function (node) {
   close(true);
 });
 
-// Меню — с главной и из сетки каталога (куда ведут плитки категорий): «влево» с края
-var MENU_SCREENS = { home: 1, catalog: 1 };
+// Меню — с главной и с экранов-сеток (каталог, «Мои торренты»): «влево» с края
+var MENU_SCREENS = { home: 1, catalog: 1, torrents: 1 };
+// Сетки, где стрелки на краю строки переносят фокус на соседнюю строку
+var WRAP_SCREENS = { catalog: 1, torrents: 1 };
 
-// В сетке каталога «влево» с первой колонки не упирается в край, а переносит фокус на
-// последнюю карточку ряда выше (moved: true) — край там есть только у самой первой
-// карточки. Узнаём перенос по тому, что «влево» увело фокус ВПРАВО: возвращаем его на
-// прежнюю карточку и открываем меню
-var lastCatalogFocus = null;
+// В сетках «влево» с первой колонки не упирается в край, а переносит фокус в конец
+// строки выше (moved: true), «вправо» с последней — в начало строки ниже. Край есть
+// только у самой первой карточки. Перенос узнаём по тому, что фокус ушёл не в ту
+// сторону: «влево» — вправо, «вправо» — влево. Возвращаем фокус на прежнюю карточку;
+// у левого края заодно открываем меню
+var lastGridFocus = null;
 
-function wrappedLeft(e) {
-  var was = lastCatalogFocus, now = e.focused;
-  return e.screen === 'catalog' && e.key === 'left' && e.moved && was && was.rect &&
-    now && now.rect && now.rect.x > was.rect.x + 5;
+function wrapped(e) {
+  var was = lastGridFocus, now = e.focused;
+  if (!WRAP_SCREENS[e.screen] || !e.moved || !was || !was.rect || !now || !now.rect) return '';
+  if (e.key === 'left' && now.rect.x > was.rect.x + 5) return 'left';
+  if (e.key === 'right' && now.rect.x < was.rect.x - 5) return 'right';
+  return '';
 }
 
 TS.on('nav', function (e) {
   if (menu) return;
-  if (wrappedLeft(e)) {
-    var back = lastCatalogFocus;
-    lastCatalogFocus = null;
-    TS.dom.focus(back.h).then(open, open);
+  var w = wrapped(e);
+  if (w) {
+    var back = lastGridFocus;
+    lastGridFocus = null;
+    var f = TS.dom.focus(back.h);
+    if (w === 'left') f.then(open, open);
     return;
   }
-  lastCatalogFocus = e.screen === 'catalog' ? e.focused : null;
+  lastGridFocus = WRAP_SCREENS[e.screen] ? e.focused : null;
+  if (e.screen === 'home' && e.focused && /\bhome-card\b/.test(e.focused.cls)) armGrid();
   if (!MENU_SCREENS[e.screen] || e.key !== 'left' || e.moved) return;
   open();
 });
 
 TS.on('key', function (dir) {
-  if (!menu) return false;
-  if (dir === 'up') move(-1);
-  else if (dir === 'down') move(1);
-  else if (dir === 'enter') close(true);
-  else if (dir === 'right' || dir === 'back') close(false);
-  return true;
+  if (menu) {
+    if (dir === 'up') move(-1);
+    else if (dir === 'down') move(1);
+    else if (dir === 'enter') close(true);
+    else if (dir === 'right' || dir === 'back') close(false);
+    return true;
+  }
+  if (grid.active) { gridKey(dir); return true; }
+  return false;
 });
+
+// ---- Главная плитками ----
+// Вместо баннера и одного ряда-ленты — показанная подборка целиком, сеткой плиток.
+// Вверх/вниз ходят по сетке внутри подборки и в соседнюю не перескакивают; подборки
+// переключаются меню («влево» с первой колонки). Пока фокус на плитках, пульт держим
+// сами (TS.keys.capture): стрелки главной переключали бы подборки. Вверх с первой
+// строки и «Назад» — в шапку, пульт отдаём приложению; «вниз» из шапки вернёт его нам.
+var GRID_TOP = 120;       // выше — шапка и заголовок подборки
+var GRID_BOTTOM_PAD = 24;
+var ROW_CARDS = '#home-rows .catalog-row:not(.home-row-hidden) .catalog-row-card';
+var grid = { active: false, busy: false, shift: 0, rowsH: null };
+
+TS.ui.addStyle([
+  '#home-hero{display:none!important}',
+  '#home-rows{transition:transform .15s ease-out}',
+  '#home-rows .catalog-row:not(.home-row-hidden) .catalog-row-viewport{overflow:visible!important}',
+  '#home-rows .catalog-row:not(.home-row-hidden) .catalog-row-track{flex-wrap:wrap!important;',
+  ' transform:none!important;width:auto!important}',
+  '.home-row-next{display:none!important}',
+  // Название плитки — целиком, до двух строк
+  '#home-rows .catalog-row-card.home-card{height:auto!important}',
+  '#home-rows .home-tile-label{height:auto!important;white-space:normal!important;',
+  ' display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;line-height:1.25!important}'
+].join('\n'));
+
+function rowsHandle() {
+  if (grid.rowsH) return Promise.resolve(grid.rowsH);
+  return TS.dom.query('#home-rows', { limit: 1, text: false }).then(function (r) {
+    grid.rowsH = r[0] ? r[0].h : null;
+    return grid.rowsH;
+  });
+}
+
+/** Сдвигаем сетку (transform: прокрутку главная держит на нуле), чтобы плитка была видна */
+function scrollToCard(card, vh, firstRow) {
+  if (!card || !card.rect) return;
+  var top = card.rect.y, bottom = card.rect.y + card.rect.h;
+  var shift = grid.shift;
+  if (firstRow) shift = 0;   // первая строка — сетка на месте, заголовок подборки виден
+  else if (bottom > vh - GRID_BOTTOM_PAD) shift += bottom - (vh - GRID_BOTTOM_PAD);
+  else if (top < GRID_TOP) shift -= GRID_TOP - top;
+  shift = Math.max(0, Math.round(shift));
+  if (shift === grid.shift) return;
+  grid.shift = shift;
+  rowsHandle().then(function (h) {
+    if (h) TS.dom.update(h, { style: { transform: shift ? 'translateY(-' + shift + 'px)' : '' } });
+  });
+}
+
+function viewportHeight() {
+  return TS.dom.query('#main-container', { limit: 1, rect: true, text: false }).then(function (r) {
+    return r[0] && r[0].rect ? r[0].rect.y + r[0].rect.h : 720;
+  });
+}
+
+/** Фокус на плитке главной — пульт наш */
+function armGrid() {
+  if (menu || grid.active) return;
+  TS.app.screen().then(function (s) {
+    if (s !== 'home' || menu) return;
+    return TS.dom.focused().then(function (f) {
+      if (!f || !/\bhome-card\b/.test(f.cls)) return;
+      grid.active = true;
+      TS.keys.capture(true);
+      return viewportHeight().then(function (vh) { scrollToCard(f, vh); });
+    });
+  }).catch(function () { });
+}
+
+function releaseGrid() {
+  if (!grid.active) return;
+  grid.active = false;
+  TS.keys.capture(false);
+}
+
+function toTopbar() {
+  releaseGrid();
+  TS.dom.query('#home-topbar .home-nav-btn.active, #home-nav-home', { limit: 2, text: false }).then(function (b) {
+    if (b[0]) TS.dom.focus(b[0].h);
+  }).catch(function () { });
+}
+
+function gridKey(dir) {
+  if (dir === 'back') {
+    // Пульт приложение уже забрало («Назад» отпускает захват всегда); оно же шлёт back
+    // при смене экрана — тогда шапка ни при чём
+    grid.active = false;
+    TS.app.screen().then(function (s) { if (s === 'home') toTopbar(); });
+    return;
+  }
+  if (grid.busy) return;
+  grid.busy = true;
+  Promise.all([TS.dom.query(ROW_CARDS, { rect: true, text: false, limit: 300 }), viewportHeight()]).then(function (r) {
+    var cards = r[0], vh = r[1];
+    if (!cards.length) return;
+    var idx = 0;
+    for (var i = 0; i < cards.length; i++) if (cards[i].focused) { idx = i; break; }
+    var y0 = cards[0].rect.y, cols = 0;
+    for (var j = 0; j < cards.length; j++) if (Math.abs(cards[j].rect.y - y0) < 3) cols++;
+    cols = Math.max(1, cols);
+    var col = idx % cols, row = Math.floor(idx / cols), lastRow = Math.floor((cards.length - 1) / cols);
+    var t = -1;
+    if (dir === 'enter') return TS.dom.click(cards[idx].h);
+    if (dir === 'right') t = col < cols - 1 && idx + 1 < cards.length ? idx + 1 : -1;
+    else if (dir === 'left') {
+      if (col === 0) { releaseGrid(); open(); return; }
+      t = idx - 1;
+    } else if (dir === 'down') {
+      if (idx + cols < cards.length) t = idx + cols;
+      else if (row < lastRow) t = cards.length - 1;
+    } else if (dir === 'up') {
+      if (row > 0) t = idx - cols;
+      else { toTopbar(); return; }
+    }
+    if (t < 0) return;
+    return TS.dom.focus(cards[t].h).then(function () { scrollToCard(cards[t], vh, t < cols); });
+  }).then(function () { grid.busy = false; }, function () { grid.busy = false; });
+}
+
+TS.on('screen', function (s) {
+  if (s !== 'home') { grid.active = false; return; }
+  setTimeout(armGrid, 600);
+});
+setTimeout(armGrid, 1200);
 
 // ---- Оценки на постерах ----
 var decorating = false;
