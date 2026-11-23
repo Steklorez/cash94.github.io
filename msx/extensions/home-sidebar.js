@@ -13,8 +13,8 @@
  */
 TS.register({
   name: 'Боковое меню главной',
-  version: '1.1',
-  description: '«Влево» с края главной — меню всех подборок, категорий и разделов. Оценки на постерах, карточки крупнее, без кнопок баннера.'
+  version: '1.2',
+  description: 'Меню подборок по «влево», главная и каталог плитками, оценки на постерах, серии по сезонам.'
 });
 
 TS.ui.addStyle([
@@ -640,3 +640,290 @@ TS.on('nav', function (e) {
     }, ms);
   });
 });
+
+// =================== Горизонтальный каталог ===================
+// Горизонтальный каталог — карточки сетки каталога (Фильмы, Сериалы, Аниме…) в 16:9
+// вместо вертикальных постеров, название — целиком, до двух строк, вместо бегущей
+// строки.
+//
+// Кадров у элементов каталога нет, поэтому картинка — тот же постер, обрезанный по
+// ширине (верхняя треть, где обычно лица). Колонок столько же, сколько задано во
+// «Внешнем виде»: по этому числу пульт считает «вверх/вниз», и менять его стилем
+// нельзя — навигация разошлась бы с раскладкой.
+(function () {
+TS.ui.addStyle([
+  '#catalog-grid .catalog-card{height:auto!important}',
+  // 16:9 через padding-top: aspect-ratio на части телевизоров (Chrome < 88) нет
+  '#catalog-grid .catalog-card .torrent-poster{position:relative!important;height:0!important;',
+  ' padding-top:56.25%!important;overflow:hidden}',
+  '#catalog-grid .catalog-card .torrent-poster img{position:absolute!important;left:0;top:0;',
+  ' width:100%!important;height:100%!important;object-fit:cover;object-position:50% 22%}',
+  // Название: без бегущей строки, до двух строк
+  '#catalog-grid .catalog-card .torrent-title,#catalog-grid .catalog-card .torrent-title span{',
+  ' white-space:normal!important;overflow:hidden;text-overflow:clip!important;',
+  ' animation:none!important;transform:none!important}',
+  '#catalog-grid .catalog-card .torrent-title{display:-webkit-box!important;-webkit-box-orient:vertical;',
+  ' -webkit-line-clamp:2;line-height:1.25;font-size:2.6vh!important}',
+  // Карточка широкая — подписи крупнее, чем у вертикального постера
+  '#catalog-grid .catalog-card .catalog-card-sub{font-size:2.1vh!important}',
+  // «★ 7.2» в левом верхнем углу постера — как на плитках главной. Оценка уже лежит в
+  // data-rating карточки; ::before — подложка со звездой и числом, ::after — та же
+  // звезда оранжевым поверх белой (один псевдоэлемент двумя цветами не покрасить)
+  '#catalog-grid .catalog-card{position:relative}',
+  '#catalog-grid .catalog-card[data-rating]:not([data-rating=""]):before,',
+  '#catalog-grid .catalog-card[data-rating]:not([data-rating=""]):after{position:absolute;left:.45em;top:.45em;',
+  // z-index выше постера: у карточки под фокусом он поднят (z-index:5) и закрывал число
+  ' z-index:8;padding:.2em .5em;border-radius:.45em;font-size:2.7vh;font-weight:700;line-height:1.3;',
+  ' pointer-events:none}',
+  '#catalog-grid .catalog-card[data-rating]:not([data-rating=""]):before{content:"★ " attr(data-rating);',
+  ' background:rgba(0,0,0,.72);color:#fff}',
+  '#catalog-grid .catalog-card[data-rating]:not([data-rating=""]):after{content:"★";color:#ff8c00;background:none}',
+  // «▶» по центру постера карточки под фокусом — как на главной. Псевдоэлементы постера
+  // заняты (::after — рамка фокуса), берём блок подписи: он не позиционирован, значит
+  // его ::before/::after встают от карточки. Середина постера по вертикали — 28.125%
+  // ширины карточки (постер 16:9), а margin-top в процентах считается как раз от ширины
+  '#catalog-grid .catalog-card.focused .torrent-info:before,',
+  '#catalog-grid .catalog-card.focused .torrent-info:after{content:"";position:absolute;left:50%;top:0;',
+  ' z-index:8;pointer-events:none}',
+  '#catalog-grid .catalog-card.focused .torrent-info:before{width:9vh;height:9vh;',
+  ' margin:calc(28.125% - 4.5vh) 0 0 -4.5vh;box-sizing:border-box;border-radius:50%;',
+  ' border:.35vh solid rgba(255,140,0,.9);background:rgba(0,0,0,.42)}',
+  '#catalog-grid .catalog-card.focused .torrent-info:after{margin:calc(28.125% - 1.6vh) 0 0 -.9vh;',
+  ' border-style:solid;border-width:1.6vh 0 1.6vh 2.6vh;',
+  ' border-color:transparent transparent transparent rgba(255,140,0,.95)}',
+  // Оценка уже в углу постера — из строки «год · ★ · тип» её убираем вместе с точкой
+  '#catalog-grid .catalog-card-sub .rating-badge,',
+  '#catalog-grid .catalog-card-sub .catalog-sub-dot-r:not(.catalog-sub-dot-y){display:none!important}'
+].join('\n'));
+})();
+
+// =================== Сезоны в раздаче ===================
+// Сезоны в раздаче — в раздаче из нескольких сезонов список серий не одной лентой на
+// сотни плиток, а сеткой: перед каждым сезоном заголовок «Сезон N», подпись серии —
+// номер внутри сезона и название из имени файла («Серия 3 · The Floating Anniversary»).
+//
+// Сезон и серия — из имени файла (data-file-name): s01e03, S1E3, 1x03. Раздача из одного
+// сезона или без таких имён остаётся как была. Подписи, которые приложение уже взяло из
+// TMDB («Сезон 2, Серия 5 - Название»), не трогаем — только снимаем «Сезон N, »:
+// сезон теперь в заголовке.
+//
+// Пока фокус на сериях, пульт держим сами (TS.keys.capture): стрелки приложения ведут
+// по ленте. Вверх/вниз — к ближайшей плитке строкой выше/ниже (через сезоны тоже),
+// влево/вправо — внутри строки, ОК — смотреть. Вверх с первой строки и «Назад» — на
+// «Играть», пульт отдаём приложению; «вниз» с «Играть» вернёт его нам.
+(function () {
+var ITEMS = '#files-list .file-item:not(.hidden)';
+var POLL_MS = 700;
+var POLL_MAX = 30;            // ~20 с: файлы раздачи приходят от TorrServer не сразу
+var SAME_ROW_PX = 10;
+
+TS.ui.addStyle([
+  // Сетку сдвигаем сами (transform) — прокрутку карточки приложение держит под одну ленту.
+  // Фон — чтобы поднятая сетка не просвечивала поверх названия раздачи
+  '#files-list.ext-seasons{flex-wrap:wrap!important;overflow:visible!important;position:relative;z-index:3;',
+  ' background:#0b0b0e;box-shadow:0 0 0 2vh #0b0b0e;transition:transform .15s ease-out}',
+  '#files-list.ext-seasons .ext-season-head{flex:0 0 100%;box-sizing:border-box;padding:2.2vh 0 .4vh;',
+  ' font-size:2.8vh;font-weight:700;color:#fff;letter-spacing:.02em}',
+  '#files-list.ext-seasons .ext-season-head:first-child{padding-top:0}',
+  '#files-list.ext-seasons .file-name{white-space:normal!important}',
+  '#files-list.ext-seasons .file-name span{animation:none!important;transform:none!important}'
+].join('\n'));
+
+var st = { list: null, heads: [], applied: '', active: false, busy: false, poll: 0, gen: 0, shift: 0 };
+var VIEW_TOP = 90;          // выше — шапка
+var VIEW_BOTTOM_PAD = 30;
+var FOLLOW_MS = 260;        // приложение докручивает карточку — меряем после
+
+/** s01e03, S1E3, s09e23-24, 1x03 → { season, episode, title } */
+function parseName(name) {
+  var m = /(?:^|[^a-z0-9])s(\d{1,2})[ ._-]?e(\d{1,3})(?:-e?\d{1,3})?(.*)$/i.exec(name) ||
+    /(?:^|[^0-9])(\d{1,2})x(\d{2,3})(.*)$/i.exec(name);
+  if (!m) return null;
+  var rest = m[3].replace(/\.[a-z0-9]{2,4}$/i, '')           // расширение
+    .replace(/[._]+/g, ' ')
+    .replace(/\b(?:\d{3,4}p|web[ -]?dl\w*|web[ -]?rip|hdtv\w*|bdrip|x26[45]|h ?26[45]|hevc|aac\w*|rus|eng)\b.*$/i, '')
+    .replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, '');
+  return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10), title: rest };
+}
+
+function clearSeasons() {
+  st.active && TS.keys.capture(false);
+  st.active = false;
+  st.heads.forEach(function (h) { TS.dom.remove(h).catch(function () { }); });
+  st.heads = [];
+  if (st.list) TS.dom.update(st.list, { removeClass: 'ext-seasons', style: { transform: '' } }).catch(function () { });
+  st.shift = 0;
+  st.list = null;
+  st.applied = '';
+}
+
+/** Раскладка по сезонам, когда серии на экране */
+function apply(gen) {
+  if (gen !== st.gen) return;
+  Promise.all([
+    TS.dom.query('#files-list', { limit: 1, text: false }),
+    TS.dom.query(ITEMS, { limit: 500, text: false })
+  ]).then(function (r) {
+    var list = r[0][0], items = r[1];
+    if (!list || items.length < 2) {
+      if (st.poll++ < POLL_MAX) setTimeout(function () { apply(gen); }, POLL_MS);
+      return;
+    }
+    var parsed = items.map(function (it) { return parseName(it.attrs['data-file-name'] || ''); });
+    var seasons = {};
+    parsed.forEach(function (p) { if (p) seasons[p.season] = 1; });
+    // Ключ раскладки: раздача, число серий, сезоны. Та же — ничего не делаем; другая —
+    // снимаем прежние заголовки (плитки серий приложение переиспользует между раздачами)
+    var key = (items[0].attrs['data-hash'] || '') + ':' + items.length + ':' + Object.keys(seasons).join(',');
+    if (key === st.applied) return;
+    if (st.applied) clearSeasons();
+    if (Object.keys(seasons).length < 2) return;
+    st.applied = key;
+    st.list = list.h;
+    var jobs = [TS.dom.update(list.h, { addClass: 'ext-seasons' })];
+    var last = null;
+    items.forEach(function (it, i) {
+      var p = parsed[i];
+      if (p && p.season !== last) {
+        last = p.season;
+        jobs.push(TS.dom.create('<div class="ext-season-head">Сезон ' + p.season + '</div>',
+          { parent: it.h, where: 'before' }).then(function (h) { st.heads.push(h); }));
+      }
+      if (p) jobs.push(relabel(it, p));
+    });
+    return Promise.all(jobs);
+  }).catch(function () { });
+}
+
+/** «Серия 37» → «Серия 3 · Название»; «Сезон 2, Серия 5 - Название» → «Серия 5 - Название» */
+function relabel(item, p) {
+  return TS.dom.query('.file-name span', { root: item.h, limit: 1 }).then(function (s) {
+    var span = s[0];
+    if (!span) return;
+    var text = span.text || '';
+    var label;
+    if (/^Серия \d+$/.test(text)) label = 'Серия ' + p.episode + (p.title ? ' · ' + p.title : '');
+    else if (/^Сезон \d+, /.test(text)) label = text.replace(/^Сезон \d+, /, '');
+    if (label && label !== text) return TS.dom.update(span.h, { text: label });
+  }).catch(function () { });
+}
+
+function start() {
+  st.gen++;
+  st.poll = 0;
+  var gen = st.gen;
+  setTimeout(function () { apply(gen); }, POLL_MS);
+}
+
+// Открытая из «Моих торрентов» раздача после detail снова сообщает экран torrents —
+// карточка при этом на месте. Поэтому список серий проверяем на обоих экранах
+var SEASON_SCREENS = { detail: 1, torrents: 1 };
+TS.on('detail', function () { start(); });
+TS.on('screen', function (s) {
+  if (SEASON_SCREENS[s]) start();
+  else { st.gen++; clearSeasons(); }
+});
+
+// ---- Пульт по сетке серий ----
+
+function arm() {
+  if (st.active || !st.applied) return;
+  st.active = true;
+  TS.keys.capture(true);
+}
+
+function release() {
+  if (!st.active) return;
+  st.active = false;
+  TS.keys.capture(false);
+}
+
+/** Сдвинуть сетку так, чтобы плитка под фокусом была на экране */
+function follow() {
+  if (!st.list) return;
+  Promise.all([
+    TS.dom.focused(),
+    TS.dom.query('#detail-view', { limit: 1, rect: true, text: false })
+  ]).then(function (r) {
+    var f = r[0], dv = r[1][0];
+    if (!f || !f.rect || !/\bfile-item\b/.test(f.cls) || !dv) return;
+    var bottom = dv.rect.y + dv.rect.h - VIEW_BOTTOM_PAD;
+    var shift = st.shift;
+    if (f.rect.y + f.rect.h > bottom) shift += f.rect.y + f.rect.h - bottom;
+    else if (f.rect.y < VIEW_TOP) shift -= VIEW_TOP - f.rect.y;
+    shift = Math.round(shift);
+    if (shift === st.shift) return;
+    st.shift = shift;
+    return TS.dom.update(st.list, { style: { transform: shift ? 'translateY(' + (-shift) + 'px)' : '' } });
+  }).catch(function () { });
+}
+
+function resetShift() {
+  if (!st.list || !st.shift) return;
+  st.shift = 0;
+  TS.dom.update(st.list, { style: { transform: '' } }).catch(function () { });
+}
+
+function toPlayButton() {
+  resetShift();
+  release();
+  TS.dom.query('#detail-progress-btn', { limit: 1, text: false }).then(function (b) {
+    if (b[0] && b[0].visible) TS.dom.focus(b[0].h);
+  }).catch(function () { });
+}
+
+TS.on('nav', function (e) {
+  if (e.focused && /\bfile-item\b/.test(e.focused.cls)) arm();
+});
+
+TS.on('key', function (dir) {
+  if (!st.active) return false;
+  if (dir === 'back') {
+    // Пульт приложение уже забрало; оно же шлёт back при смене экрана
+    st.active = false;
+    toPlayButton();
+    return true;
+  }
+  if (st.busy) return true;
+  st.busy = true;
+  TS.dom.query(ITEMS, { limit: 500, rect: true, text: false }).then(function (items) {
+    var cur = null;
+    for (var i = 0; i < items.length; i++) if (items[i].focused) { cur = items[i]; break; }
+    if (!cur) { release(); return; }
+    if (dir === 'enter') return TS.dom.click(cur.h);
+    var t = pick(items, cur, dir);
+    if (t === 'top') { toPlayButton(); return; }
+    if (t) return TS.dom.focus(t.h).then(function () { setTimeout(follow, FOLLOW_MS); });
+  }).then(function () { st.busy = false; }, function () { st.busy = false; });
+  return true;
+});
+
+/** Соседняя плитка по направлению — по геометрии: строки сезонов разной длины */
+function pick(items, cur, dir) {
+  var cy = cur.rect.y, cx = cur.rect.x, best = null, bestD = 1e9, i, it, dy;
+  if (dir === 'left' || dir === 'right') {
+    for (i = 0; i < items.length; i++) {
+      it = items[i];
+      if (Math.abs(it.rect.y - cy) > SAME_ROW_PX) continue;
+      var dx = it.rect.x - cx;
+      if ((dir === 'right' && dx > 5 && dx < bestD) || (dir === 'left' && dx < -5 && -dx < bestD)) { best = it; bestD = Math.abs(dx); }
+    }
+    return best;
+  }
+  // Ближайшая строка в нужную сторону, в ней — ближайшая по горизонтали плитка
+  var rowY = null;
+  for (i = 0; i < items.length; i++) {
+    dy = items[i].rect.y - cy;
+    if (dir === 'down' && dy > SAME_ROW_PX && (rowY === null || items[i].rect.y < rowY)) rowY = items[i].rect.y;
+    if (dir === 'up' && dy < -SAME_ROW_PX && (rowY === null || items[i].rect.y > rowY)) rowY = items[i].rect.y;
+  }
+  if (rowY === null) return dir === 'up' ? 'top' : null;
+  for (i = 0; i < items.length; i++) {
+    it = items[i];
+    if (Math.abs(it.rect.y - rowY) > SAME_ROW_PX) continue;
+    var d = Math.abs(it.rect.x - cx);
+    if (d < bestD) { best = it; bestD = d; }
+  }
+  return best;
+}
+})();
