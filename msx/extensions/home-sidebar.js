@@ -118,7 +118,7 @@ function buildItems(home, navBtns, icons) {
       return;
     }
     var card = row.cards[Math.min(row.col, row.cards.length - 1)];
-    out.push({ name: row.title, h: card.h, cur: row.index === home.activeRow, split: splitName(row.title) });
+    out.push({ name: row.title, h: card.h, row: row.h, cur: row.index === home.activeRow, split: splitName(row.title) });
   });
   pinFirst(out);
   // Подряд идущие с общей приставкой — группой (и внутри «Категорий» тоже)
@@ -202,7 +202,13 @@ function close(go) {
   if (!go) return;
   var it = m.items[m.sel];
   if (!it || !it.h) return;
-  if (it.click) TS.dom.click(it.h); else TS.dom.focus(it.h);
+  if (it.click) { TS.dom.click(it.h); return; }
+  // Ряды главной, кроме показанного, спрятаны (home-row-hidden), а фокус мост ставит
+  // только на видимое — переход в другую подборку молча не срабатывал. Снимаем класс
+  // с нужного ряда и фокусируем: главная (focusItem → setActiveRow) сама разложит
+  // классы рядов заново, как при «вниз»
+  var show = it.row ? TS.dom.update(it.row, { removeClass: 'home-row-hidden' }) : Promise.resolve();
+  show.then(function () { return TS.dom.focus(it.h); }).catch(function () { });
 }
 
 // Мышью и пальцем — клик по пункту
