@@ -13,9 +13,19 @@
  */
 TS.register({
   name: 'Боковое меню главной',
-  version: '1.2',
+  version: '1.3',
   description: 'Меню подборок по «влево», главная и каталог плитками, оценки на постерах, серии по сезонам.'
 });
+
+// Что умеет мост этого TorrStream (TS.info().features). Есть возможность — пользуемся
+// ею; нет (старая версия) — прежние обходы: снять класс ряда, переход через главную,
+// поправка фокуса после приложения
+var FEATURES = (TS.info() && TS.info().features) || [];
+function has(f) { return FEATURES.indexOf(f) !== -1; }
+
+// Под этот плагин: 4 колонки каталога (карточки горизонтальные) и без автотрейлеров
+// (баннера на главной нет). Применяются только кнопкой в меню расширения
+if (has('recommend')) TS.app.recommend({ catalogColumns: '4', heroTrailers: false });
 
 TS.ui.addStyle([
   '#ext-sb{position:fixed;left:0;top:0;bottom:0;width:30vw;min-width:280px;max-width:520px;z-index:9000;',
@@ -77,9 +87,13 @@ var PIN_FIRST = /в кинотеатрах$/i;
 
 /** Значок плитки категории — тот же глиф, что водяным знаком на самой плитке */
 var tileIcons = {};
+// Ключ категории плитки (data-home-cat) — для TS.app.openCategory
+var tileCats = {};
 
 function loadTileIcons(home) {
-  var jobs = [];
+  var jobs = [TS.dom.query('#home-rows .home-cat-tile', { limit: 100, text: false }).then(function (r) {
+    r.forEach(function (t) { if (t.attrs['data-home-cat']) tileCats[t.h] = t.attrs['data-home-cat']; });
+  }).catch(function () { })];
   home.rows.forEach(function (row) {
     row.cards.forEach(function (c) {
       if (!c.tile || tileIcons[c.h]) return;
@@ -126,12 +140,12 @@ function buildItems(home, navBtns, icons) {
       tileGroup = row.title || tileGroup;
       tilesAt = rows.length;
       row.cards.forEach(function (c) {
-        tiles.push({ name: c.title, h: c.h, click: true, tile: true, icon: icons[c.h] || 'fi fi-rr-apps', split: splitName(c.title) });
+        tiles.push({ name: c.title, h: c.h, click: true, tile: true, cat: tileCats[c.h], icon: icons[c.h] || 'fi fi-rr-apps', split: splitName(c.title) });
       });
       return;
     }
     var card = row.cards[Math.min(row.col, row.cards.length - 1)];
-    rows.push({ name: row.title, h: card.h, row: row.h, cur: row.index === home.activeRow, split: splitName(row.title) });
+    rows.push({ name: row.title, h: card.h, row: row.h, rowIndex: row.index, cur: row.index === home.activeRow, split: splitName(row.title) });
   });
   if (tilesAt < 0) return groupConsecutive(rows);
 
@@ -259,6 +273,20 @@ function close(go) {
   TS.storage.set(LAST_PICK, pickKey(it));
   // Разделы шапки нажимаются с любого экрана
   if (it.click && !it.tile) { TS.dom.click(it.h); return; }
+  // Новый мост: категорию и ряд открываем напрямую, с любого экрана, без мелькания
+  if (it.tile && it.cat && has('open-category')) {
+    TS.app.openCategory(it.cat).catch(function () { goViaHome(it); });
+    return;
+  }
+  if (!it.tile && it.rowIndex !== undefined && has('open-row')) {
+    TS.app.openRow(it.rowIndex).then(function () { setTimeout(armGrid, 450); }, function () { goViaHome(it); });
+    return;
+  }
+  goViaHome(it);
+}
+
+/** Старый мост: подборки и плитки — только с главной; из каталога идём через неё */
+function goViaHome(it) {
   TS.app.screen().then(function (s) {
     if (s === 'home') return goItem(it);
     // Меню открыто из каталога: подборки и плитки категорий живут на главной, и плитка
@@ -315,7 +343,8 @@ function hideLoader() {
  */
 function goItem(it) {
   if (it.click) return TS.dom.click(it.h).catch(function () { });
-  var show = it.row ? TS.dom.update(it.row, { removeClass: 'home-row-hidden' }) : Promise.resolve();
+  // Новый мост ставит фокус и на карточку спрятанного ряда (focus-home-row)
+  var show = it.row && !has('focus-home-row') ? TS.dom.update(it.row, { removeClass: 'home-row-hidden' }) : Promise.resolve();
   return show.then(function () { return TS.dom.focus(it.h); }).catch(function () { });
 }
 
@@ -463,7 +492,8 @@ function armGrid() {
     return TS.dom.focused().then(function (f) {
       if (!f || !/\bhome-card\b/.test(f.cls)) return;
       grid.active = true;
-      TS.keys.capture(true);
+      // Новый мост: только стрелки и «Назад», ОК — приложению (открыть карточку)
+      TS.keys.capture(true, has('capture-keys') ? { keys: ['up', 'down', 'left', 'right', 'back'] } : undefined);
       return viewportHeight().then(function (vh) { scrollToCard(f, vh); });
     });
   }).catch(function () { });
@@ -770,6 +800,7 @@ function parseName(name) {
 }
 
 function clearSeasons() {
+  seasonsRelease();
   st.heads.forEach(function (h) { TS.dom.remove(h).catch(function () { }); });
   st.heads = [];
   if (st.list) TS.dom.update(st.list, { removeClass: 'ext-seasons', style: { transform: '', top: '', 'clip-path': '' } }).catch(function () { });
@@ -904,10 +935,55 @@ function recheck(seq, target) {
   });
 }
 
+// Новый мост (capture-keys): вверх/вниз по сетке серий ведём сами, без поправок задним
+// числом; ОК, «Назад», влево/вправо — у приложения. Пульт берём, когда фокус пришёл на
+// серию, и отдаём на «Играть» (вверх с первой строки) и при уходе с экрана
+var sCap = false, sBusy = false;
+
+function seasonsArm() {
+  if (sCap || !st.applied) return;
+  sCap = true;
+  TS.keys.capture(true, { keys: ['up', 'down'] });
+}
+
+function seasonsRelease() {
+  if (!sCap) return;
+  sCap = false;
+  TS.keys.capture(false);
+}
+
+TS.on('key', function (dir) {
+  if (!sCap) return false;
+  if (dir === 'back') { sCap = false; return true; }   // мост отпустил пульт сам (смена экрана)
+  if (dir !== 'up' && dir !== 'down') return false;
+  if (sBusy) return true;
+  sBusy = true;
+  TS.dom.query(ITEMS, { limit: 500, rect: true, text: false }).then(function (items) {
+    var cur = null;
+    for (var i = 0; i < items.length; i++) if (items[i].focused) { cur = items[i]; break; }
+    if (!cur) { seasonsRelease(); return; }
+    var t = pick(items, cur, dir);
+    if (t === 'top') {
+      resetShift();
+      seasonsRelease();
+      return TS.dom.query('#detail-progress-btn', { limit: 1, text: false }).then(function (b) {
+        if (b[0] && b[0].visible) return TS.dom.focus(b[0].h);
+      });
+    }
+    if (t) return TS.dom.focus(t.h).then(function () { setTimeout(follow, FOLLOW_MS); });
+  }).then(function () { sBusy = false; }, function () { sBusy = false; });
+  return true;
+});
+
 TS.on('nav', function (e) {
   var seq = ++navSeq;
   var onItem = e.focused && /\bfile-item\b/.test(e.focused.cls);
   var was = lastItem;
+  if (has('capture-keys')) {
+    if (st.applied && onItem) { seasonsArm(); setTimeout(follow, FOLLOW_MS); }
+    else if (!onItem) seasonsRelease();
+    return;
+  }
   if (!st.applied) { lastItem = null; return; }
   if (e.key !== 'up' && e.key !== 'down') {
     // Влево/вправо/ОК: на серии — запоминаем её, ушли на другое — забываем
