@@ -408,6 +408,16 @@ TS.ui.addStyle([
   '#home-rows .catalog-row:not(.home-row-hidden) .catalog-row-track{flex-wrap:wrap!important;',
   ' transform:none!important;width:auto!important}',
   '.home-row-next{display:none!important}',
+  // Ровно 4 плитки в ряд при любом размере экрана и ползунке «Размер карточек»: ширина —
+  // четверть ряда минус зазоры (gap 18px), картинка — 16:9 от ширины (padding-top)
+  '#home-rows .catalog-row:not(.home-row-hidden) .catalog-row-card.home-card{',
+  ' flex:0 0 calc(25% - 13.5px)!important;width:calc(25% - 13.5px)!important}',
+  '#home-rows .catalog-row:not(.home-row-hidden) .catalog-row-card.home-card .torrent-poster{',
+  ' width:100%!important;height:auto!important;padding:0!important;aspect-ratio:auto!important}',
+  '#home-rows .catalog-row:not(.home-row-hidden) .catalog-row-card.home-card .row-poster-img{',
+  ' width:100%!important;height:0!important;padding-top:56.25%!important}',
+  '#home-rows .catalog-row:not(.home-row-hidden) .row-poster-img>*{position:absolute!important;',
+  ' left:0;top:0;width:100%!important;height:100%!important}',
   // Название плитки — целиком, до двух строк
   '#home-rows .catalog-row-card.home-card{height:auto!important}',
   '#home-rows .home-tile-label{height:auto!important;white-space:normal!important;font-size:2.6vh!important;',
