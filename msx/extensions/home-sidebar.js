@@ -113,7 +113,7 @@ function buildItems(home, navBtns, icons) {
     if (row.cards[0].tile) {
       out.push({ group: row.title || 'Категории' });
       row.cards.forEach(function (c) {
-        out.push({ name: c.title, h: c.h, click: true, inGroup: true, icon: icons[c.h] || 'fi fi-rr-apps', split: splitName(c.title) });
+        out.push({ name: c.title, h: c.h, click: true, tile: true, inGroup: true, icon: icons[c.h] || 'fi fi-rr-apps', split: splitName(c.title) });
       });
       return;
     }
@@ -202,14 +202,40 @@ function close(go) {
   if (!go) return;
   var it = m.items[m.sel];
   if (!it || !it.h) return;
-  if (it.click) { TS.dom.click(it.h); return; }
-  // Ряды главной, кроме показанного, спрятаны (home-row-hidden), а фокус мост ставит
-  // только на видимое — переход в другую подборку молча не срабатывал. Снимаем класс
-  // с нужного ряда и фокусируем: главная (focusItem → setActiveRow) сама разложит
-  // классы рядов заново, как при «вниз»
-  var show = it.row ? TS.dom.update(it.row, { removeClass: 'home-row-hidden' }) : Promise.resolve();
-  show.then(function () { return TS.dom.focus(it.h); }).catch(function () { });
+  // Разделы шапки нажимаются с любого экрана
+  if (it.click && !it.tile) { TS.dom.click(it.h); return; }
+  TS.app.screen().then(function (s) {
+    if (s === 'home') return goItem(it);
+    // Меню открыто из каталога: подборки и плитки категорий живут на главной, и плитка
+    // нажимается только оттуда. Сначала на главную («Главная» в шапке), к пункту — когда
+    // она встала на экран и вернула свой фокус (иначе он перебил бы наш)
+    pendingRow = it;
+    return TS.dom.query('#home-nav-home', { limit: 1, text: false }).then(function (b) {
+      if (b[0]) TS.dom.click(b[0].h); else pendingRow = null;
+    });
+  }).catch(function () { });
 }
+
+var pendingRow = null;
+
+/**
+ * Ряды главной, кроме показанного, спрятаны (home-row-hidden), а фокус мост ставит
+ * только на видимое — переход в другую подборку молча не срабатывал. Снимаем класс с
+ * нужного ряда и фокусируем: главная (focusItem → setActiveRow) сама разложит классы
+ * рядов заново, как при «вниз».
+ */
+function goItem(it) {
+  if (it.click) return TS.dom.click(it.h).catch(function () { });
+  var show = it.row ? TS.dom.update(it.row, { removeClass: 'home-row-hidden' }) : Promise.resolve();
+  return show.then(function () { return TS.dom.focus(it.h); }).catch(function () { });
+}
+
+TS.on('screen', function (s) {
+  if (s !== 'home' || !pendingRow) return;
+  var it = pendingRow;
+  pendingRow = null;
+  setTimeout(function () { goItem(it); }, 500);
+});
 
 // Мышью и пальцем — клик по пункту
 TS.dom.on('#ext-sb .sb-item', 'click', function (node) {
@@ -218,8 +244,11 @@ TS.dom.on('#ext-sb .sb-item', 'click', function (node) {
   close(true);
 });
 
+// Меню — с главной и из сетки каталога (куда ведут плитки категорий): «влево» с края
+var MENU_SCREENS = { home: 1, catalog: 1 };
+
 TS.on('nav', function (e) {
-  if (menu || e.screen !== 'home' || e.key !== 'left' || e.moved) return;
+  if (menu || !MENU_SCREENS[e.screen] || e.key !== 'left' || e.moved) return;
   open();
 });
 
@@ -260,7 +289,8 @@ function decorate() {
 }
 
 TS.on('home', decorate);
-TS.on('screen', function (s) { if (s !== 'home') close(false); });
+// Меню принадлежит экрану, на котором его открыли: сменился экран — закрываем
+TS.on('screen', function () { close(false); });
 
 // ---- Карточки рядов крупнее ----
 // Раскладку считает главная: высоту баннера и размер плиток под экран. Её числа мост
