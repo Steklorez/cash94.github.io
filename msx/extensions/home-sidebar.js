@@ -874,19 +874,44 @@ function resetShift() {
 
 // Пульт остаётся у приложения: ОК по серии запускает её только само приложение
 // (нажимать плитки серий расширению нельзя), а захваченный пульт ОК до него не
-// пропускает. Влево/вправо приложение и так ведёт по порядку серий; вверх/вниз
-// поправляем после него — на плитку строкой выше/ниже (вверх с первой строки —
-// оставляем, куда увело приложение: на «Играть»)
-var prevItem = null;
+// пропускает. Влево/вправо приложение и так ведёт по порядку серий. Вверх/вниз
+// оно уводит из списка (на «Играть», в шапку) — поправляем после него на плитку
+// строкой выше/ниже. События nav приходят с задержкой и при быстрых нажатиях
+// склеиваются: фокус может успеть уйти с «Играть» ещё выше. Поэтому помним последнюю
+// серию — пока человек сам не ушёл из списка — и поправляем от неё, где бы ни был фокус.
+// Вверх с первой строки — оставляем, куда увело приложение («Играть»)
+var lastItem = null;
+var navSeq = 0;
+// Быстрые нажатия приложение выполняет в своём темпе, с задержкой: последнее может
+// увести фокус из списка уже после нашей поправки и без нового события. Поэтому через
+// RECHECK_MS проверяем ещё раз: новых нажатий не было, а фокус не на серии — вернуть
+var RECHECK_MS = [350, 700];
+
+function recheck(seq, target) {
+  RECHECK_MS.forEach(function (ms) {
+    setTimeout(function () {
+      if (seq !== navSeq || lastItem !== target) return;
+      TS.dom.focused().then(function (f) {
+        if (seq !== navSeq || (f && /\bfile-item\b/.test(f.cls))) return;
+        return TS.dom.focus(target.h).then(function () { setTimeout(follow, FOLLOW_MS); });
+      }).catch(function () { });
+    }, ms);
+  });
+}
 
 TS.on('nav', function (e) {
-  var was = prevItem;
+  var seq = ++navSeq;
   var onItem = e.focused && /\bfile-item\b/.test(e.focused.cls);
-  prevItem = onItem ? e.focused : null;
-  if (!st.applied) return;
-  if (!was || (e.key !== 'up' && e.key !== 'down')) {
+  var was = lastItem;
+  if (!st.applied) { lastItem = null; return; }
+  if (e.key !== 'up' && e.key !== 'down') {
+    // Влево/вправо/ОК: на серии — запоминаем её, ушли на другое — забываем
+    lastItem = onItem ? e.focused : null;
     if (onItem) setTimeout(follow, FOLLOW_MS);
-    if (!onItem && was && e.key === 'up') resetShift();
+    return;
+  }
+  if (!was) {
+    if (onItem) { lastItem = e.focused; setTimeout(follow, FOLLOW_MS); }
     return;
   }
   TS.dom.query(ITEMS, { limit: 500, rect: true, text: false }).then(function (items) {
@@ -894,9 +919,11 @@ TS.on('nav', function (e) {
     for (var i = 0; i < items.length; i++) if (items[i].h === was.h) { cur = items[i]; break; }
     if (!cur) return;
     var t = pick(items, cur, e.key);
-    if (t === 'top') { resetShift(); return; }
+    if (t === 'top') { lastItem = null; resetShift(); return; }
     if (!t) t = cur;                       // ниже некуда — остаёмся на месте
-    prevItem = t;
+    lastItem = t;
+    recheck(seq, t);
+    if (e.focused && e.focused.h === t.h) { setTimeout(follow, FOLLOW_MS); return; }
     return TS.dom.focus(t.h).then(function () { setTimeout(follow, FOLLOW_MS); });
   }).catch(function () { });
 });
