@@ -32,8 +32,8 @@ TS.ui.addStyle([
   '#ext-sb .sb-hint{position:absolute;left:0;right:0;bottom:0;padding:.9em 1.4em;font-size:.7em;color:#8b98ab;',
   ' border-top:1px solid rgba(255,255,255,.08)}',
   // Оценка — в левом верхнем углу и тем же оранжевым, что «★» в строке баннера
-  '.ext-rate{position:absolute;left:.4em;top:.4em;z-index:3;padding:.15em .45em;border-radius:.4em;',
-  ' background:rgba(0,0,0,.72);color:#fff;font-size:.8em;font-weight:700;line-height:1.3}',
+  '.ext-rate{position:absolute;left:.4em;top:.4em;z-index:3;padding:.2em .5em;border-radius:.45em;',
+  ' background:rgba(0,0,0,.72);color:#fff;font-size:2.7vh;font-weight:700;line-height:1.3}',
   '.ext-rate b{color:#ff8c00;margin-right:.2em}',
 
   // Кнопки баннера: с пульта до них не дойти, пока листаешь ряд. Скрытые главная
@@ -243,13 +243,47 @@ function close(go) {
     // нажимается только оттуда. Сначала на главную («Главная» в шапке), к пункту — когда
     // она встала на экран и вернула свой фокус (иначе он перебил бы наш)
     pendingRow = it;
+    showLoader();
     return TS.dom.query('#home-nav-home', { limit: 1, text: false }).then(function (b) {
-      if (b[0]) TS.dom.click(b[0].h); else pendingRow = null;
+      if (b[0]) TS.dom.click(b[0].h); else { pendingRow = null; hideLoader(); }
     });
   }).catch(function () { });
 }
 
 var pendingRow = null;
+
+// ---- Заставка перехода ----
+// Из каталога в другую категорию или подборку идём через главную, и она мелькала на
+// полсекунды. На время перехода закрываем экран своей заставкой; снимаем, когда
+// открылось выбранное (или через LOADER_MAX — что бы ни случилось)
+var LOADER_MAX = 5000;
+var loader = { el: null, timer: 0, waitCatalog: false };
+
+TS.ui.addStyle([
+  '#ext-sb-loading{position:fixed;left:0;top:0;right:0;bottom:0;z-index:9500;background:#000;',
+  ' display:flex;align-items:center;justify-content:center}',
+  '#ext-sb-loading i{display:block;width:7vh;height:7vh;box-sizing:border-box;border-radius:50%;',
+  ' border:.6vh solid rgba(255,255,255,.15);border-top-color:#ff8c00;animation:ext-sb-spin .8s linear infinite}',
+  '@keyframes ext-sb-spin{to{transform:rotate(360deg)}}'
+].join('\n'));
+
+function showLoader() {
+  clearTimeout(loader.timer);
+  loader.timer = setTimeout(hideLoader, LOADER_MAX);
+  if (loader.el) return;
+  loader.el = 'pending';
+  TS.dom.create('<div id="ext-sb-loading"><i></i></div>').then(function (el) {
+    if (loader.el === 'pending') loader.el = el; else TS.dom.remove(el);
+  }).catch(function () { loader.el = null; });
+}
+
+function hideLoader() {
+  clearTimeout(loader.timer);
+  loader.waitCatalog = false;
+  var el = loader.el;
+  loader.el = null;
+  if (el && el !== 'pending') TS.dom.remove(el);
+}
 
 /**
  * Ряды главной, кроме показанного, спрятаны (home-row-hidden), а фокус мост ставит
@@ -264,10 +298,18 @@ function goItem(it) {
 }
 
 TS.on('screen', function (s) {
+  if (s === 'catalog' && loader.waitCatalog) {
+    // Сетке категории — мгновение на первую отрисовку, потом убираем заставку
+    setTimeout(hideLoader, 350);
+    return;
+  }
   if (s !== 'home' || !pendingRow) return;
   var it = pendingRow;
   pendingRow = null;
-  setTimeout(function () { goItem(it); }, 500);
+  setTimeout(function () {
+    if (it.click) loader.waitCatalog = true;           // плитка откроет каталог
+    goItem(it).then(function () { if (!it.click) setTimeout(hideLoader, 250); });
+  }, 500);
 });
 
 // Мышью и пальцем — клик по пункту
