@@ -75,23 +75,6 @@ function splitName(name) {
 // «…В кинотеатрах» — первым пунктом категорий: самое свежее, туда заходят чаще всего
 var PIN_FIRST = /в кинотеатрах$/i;
 
-/** Подборку «…В кинотеатрах» — сразу под заголовок категорий. Нет её или категорий — как было. */
-function pinFirst(out) {
-  var pin = -1, head = -1;
-  for (var i = 0; i < out.length; i++) {
-    if (pin < 0 && !out[i].group && !out[i].click && PIN_FIRST.test(out[i].name)) pin = i;
-    if (head < 0 && out[i].group) head = i;
-  }
-  if (pin < 0 || head < 0) return;
-  var it = out.splice(pin, 1)[0];
-  if (pin < head) head--;
-  it.name = it.split ? it.split.rest : it.name;
-  it.split = null;
-  it.inGroup = true;
-  it.icon = 'fi fi-rr-popcorn';
-  out.splice(head + 1, 0, it);
-}
-
 /** Значок плитки категории — тот же глиф, что водяным знаком на самой плитке */
 var tileIcons = {};
 
@@ -109,40 +92,79 @@ function loadTileIcons(home) {
   return Promise.all(jobs).then(function () { return tileIcons; });
 }
 
-/** Пункты меню: подборки (группы по приставке), плитки категорий, шапка */
-function buildItems(home, navBtns, icons) {
+/** Подряд идущие с общей приставкой («Что популярно · …») — группой; в именах хвост */
+function groupConsecutive(list) {
   var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var it = list[i], cur = it.split;
+    var prev = i > 0 && list[i - 1].split, next = list[i + 1] && list[i + 1].split;
+    var samePrev = cur && prev && prev.prefix === cur.prefix, sameNext = cur && next && next.prefix === cur.prefix;
+    if (cur && (samePrev || sameNext)) {
+      if (!samePrev) out.push({ group: cur.prefix });
+      it.name = cur.rest;
+      it.inGroup = true;
+    }
+    out.push(it);
+  }
+  return out;
+}
+
+/**
+ * Пункты меню, сверху вниз:
+ *  - подборки до плиток («Продолжить просмотр»);
+ *  - «Категории»: «…В кинотеатрах» первым, затем плитки без приставки;
+ *  - остальные подборки главной, с общей приставкой — группами («Топ рейтинга»…);
+ *  - в самом конце — семейства с приставкой, у которых есть плитки («Кинопоиск»):
+ *    его плитки-категории и его подборки главной одной группой.
+ * Разделов шапки в меню нет: до них один шаг вверх.
+ */
+function buildItems(home, navBtns, icons) {
+  var rows = [], tiles = [], tileGroup = 'Категории', tilesAt = -1;
   home.rows.forEach(function (row) {
     if (!row.cards.length) return;
     if (row.cards[0].tile) {
-      out.push({ group: row.title || 'Категории' });
+      tileGroup = row.title || tileGroup;
+      tilesAt = rows.length;
       row.cards.forEach(function (c) {
-        out.push({ name: c.title, h: c.h, click: true, tile: true, inGroup: true, icon: icons[c.h] || 'fi fi-rr-apps', split: splitName(c.title) });
+        tiles.push({ name: c.title, h: c.h, click: true, tile: true, icon: icons[c.h] || 'fi fi-rr-apps', split: splitName(c.title) });
       });
       return;
     }
     var card = row.cards[Math.min(row.col, row.cards.length - 1)];
-    out.push({ name: row.title, h: card.h, row: row.h, cur: row.index === home.activeRow, split: splitName(row.title) });
+    rows.push({ name: row.title, h: card.h, row: row.h, cur: row.index === home.activeRow, split: splitName(row.title) });
   });
-  pinFirst(out);
-  // Подряд идущие с общей приставкой — группой (и внутри «Категорий» тоже)
-  for (var i = 0; i < out.length; i++) {
-    var cur = out[i].split;
-    if (!cur) continue;
-    var prev = i > 0 && out[i - 1].split, next = out[i + 1] && out[i + 1].split;
-    var samePrev = prev && prev.prefix === cur.prefix, sameNext = next && next.prefix === cur.prefix;
-    if (!samePrev && !sameNext) continue;
-    if (!samePrev) { out.splice(i, 0, { group: cur.prefix }); i++; }
-    out[i].name = cur.rest;
-    out[i].inGroup = true;
-    out[i].split = cur;   // сосед сверяется по приставке, а имя уже хвост
+  if (tilesAt < 0) return groupConsecutive(rows);
+
+  var before = rows.slice(0, tilesAt), after = rows.slice(tilesAt);
+  var plain = [], families = [], byPrefix = {};
+  tiles.forEach(function (t) {
+    if (!t.split) { plain.push(t); return; }
+    var p = t.split.prefix;
+    if (!byPrefix[p]) { byPrefix[p] = []; families.push(p); }
+    byPrefix[p].push(t);
+  });
+
+  var middle = [], pinned = null;
+  after.forEach(function (r) {
+    if (!pinned && PIN_FIRST.test(r.name)) { pinned = r; return; }
+    if (r.split && byPrefix[r.split.prefix]) { byPrefix[r.split.prefix].push(r); return; }
+    middle.push(r);
+  });
+
+  var out = groupConsecutive(before);
+  out.push({ group: tileGroup });
+  if (pinned) {
+    pinned.name = pinned.split ? pinned.split.rest : pinned.name;
+    pinned.icon = 'fi fi-rr-popcorn';
+    pinned.inGroup = true;
+    out.push(pinned);
   }
-  if (navBtns.length) {
-    out.push({ group: 'Разделы' });
-    navBtns.forEach(function (b) {
-      if (b.text) out.push({ name: b.text, h: b.h, click: true, inGroup: true, icon: 'fi fi-rr-angle-small-right' });
-    });
-  }
+  plain.forEach(function (t) { t.inGroup = true; out.push(t); });
+  out = out.concat(groupConsecutive(middle));
+  families.forEach(function (p) {
+    out.push({ group: p });
+    byPrefix[p].forEach(function (it) { it.name = it.split.rest; it.inGroup = true; out.push(it); });
+  });
   return out;
 }
 
@@ -580,3 +602,31 @@ TS.on('home', function () { setTimeout(scaleCards, 600); });
 TS.on('screen', function (s) { if (s === 'home') setTimeout(scaleCards, 600); });
 TS.on('nav', function (e) { if (!scaled && e.screen === 'home') scaleCards(); });
 setTimeout(scaleCards, 600);
+
+// ---- Шапка: после ОК фокус остаётся на разделе ----
+// ОК на пункте шапки открывает раздел и уводит фокус в его список — шапку приходится
+// искать заново. Возвращаем фокус на пункт: в список — «вниз», к соседнему разделу —
+// «вправо». Поиск (там сразу поле), «Донат» (окно поверх шапки) и настройки не трогаем.
+// Список раздела грузится не сразу и сам ставит фокус в первую карточку — поэтому
+// вторая попытка; её не делаем, если человек уже нажал что-то сам
+var KEEP_TOPBAR = /^(home-nav-home|tab-torrents|tab-favorites)$/;
+var KEEP_DELAYS = [450, 1100];
+var prevNavFocus = null;
+
+TS.on('nav', function (e) {
+  var was = prevNavFocus;
+  prevNavFocus = e.focused;
+  if (e.key !== 'enter' || !was || !KEEP_TOPBAR.test(was.id)) return;
+  // Событие приходит через 60 мс — раздел ещё не открылся и фокус на месте; список
+  // заберёт его позже, поэтому решаем по таймерам, глядя на текущий фокус
+  var mark = prevNavFocus;
+  KEEP_DELAYS.forEach(function (ms) {
+    setTimeout(function () {
+      if (prevNavFocus !== mark) return;   // уже ходят сами
+      TS.dom.focused().then(function (f) {
+        if (f && f.id === was.id) return;
+        return TS.dom.focus(was.h);
+      }).catch(function () { });
+    }, ms);
+  });
+});
