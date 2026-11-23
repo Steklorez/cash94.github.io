@@ -720,17 +720,35 @@ var SAME_ROW_PX = 10;
 TS.ui.addStyle([
   // Сетку сдвигаем сами (transform) — прокрутку карточки приложение держит под одну ленту.
   // Фон — чтобы поднятая сетка не просвечивала поверх названия раздачи
-  '#files-list.ext-seasons{flex-wrap:wrap!important;overflow:visible!important;position:relative;z-index:3;',
-  ' background:#0b0b0e;box-shadow:0 0 0 2vh #0b0b0e;transition:transform .15s ease-out}',
-  '#files-list.ext-seasons .ext-season-head{flex:0 0 100%;box-sizing:border-box;padding:2.2vh 0 .4vh;',
+  // Сетка закреплена на экране под названием раздачи (top ставим при раскладке): экран
+  // раздачи приложение прокручивает под одну ленту, иногда на тысячи точек, и
+  // прокрученная сетка уезжала. Закреплённую листаем сами — transform, а clip-path
+  // прячет то, что поднялось выше её верхнего края
+  '#files-list.ext-seasons{flex-wrap:wrap!important;align-content:flex-start;overflow:visible!important;',
+  // Высота — по содержимому (без bottom:0): clip-path считается от рамки сетки, и на
+  // короткой рамке большой сдвиг обрезал бы всё
+  ' position:fixed!important;left:0;right:0;bottom:auto!important;height:auto!important;z-index:3;',
+  ' background:#000;margin:0!important;',
+  ' transition:transform .15s ease-out,clip-path .15s ease-out}',
+  '#files-list.ext-seasons .ext-season-head{flex:0 0 100%;box-sizing:border-box;padding:2.4vh 0 1vh;',
   ' font-size:2.8vh;font-weight:700;color:#fff;letter-spacing:.02em}',
   '#files-list.ext-seasons .ext-season-head:first-child{padding-top:0}',
-  '#files-list.ext-seasons .file-name{white-space:normal!important}',
-  '#files-list.ext-seasons .file-name span{animation:none!important;transform:none!important}'
+  // Серия — компактная плитка-строка: у таких раздач кадров нет, а пустые кадры 16:9
+  // давали 3 серии на экран. Пять в ряд, отступ — margin (flex gap есть не везде)
+  '#detail-view #files-list.ext-seasons .file-item{flex:0 0 calc(20% - 1.2vw)!important;width:calc(20% - 1.2vw)!important;',
+  ' max-width:none!important;min-width:0!important;height:auto!important;min-height:9vh;margin:0 1.2vw 1.2vw 0!important;',
+  ' box-sizing:border-box}',
+  '#files-list.ext-seasons .file-still-container,#files-list.ext-seasons .file-overlay{display:none!important}',
+  // Круглая «▶» приложения легла бы на подпись — в плитке-строке хватает рамки фокуса
+  '#files-list.ext-seasons .file-content{position:absolute!important;left:0;top:0;right:0;bottom:0;',
+  ' pointer-events:none;opacity:0!important}',
+  '#files-list.ext-seasons .file-info{position:static!important;padding:1.3vh 1vw!important;background:none!important}',
+  '#files-list.ext-seasons .file-name{white-space:normal!important;font-size:2.3vh!important;line-height:1.25!important}',
+  '#files-list.ext-seasons .file-name span{animation:none!important;transform:none!important}',
+  '#files-list.ext-seasons .file-size{font-size:1.8vh!important;margin-top:.4vh}'
 ].join('\n'));
 
-var st = { list: null, heads: [], applied: '', active: false, busy: false, poll: 0, gen: 0, shift: 0 };
-var VIEW_TOP = 90;          // выше — шапка
+var st = { list: null, heads: [], applied: '', poll: 0, gen: 0, shift: 0, top: 0 };
 var VIEW_BOTTOM_PAD = 30;
 var FOLLOW_MS = 260;        // приложение докручивает карточку — меряем после
 
@@ -747,11 +765,9 @@ function parseName(name) {
 }
 
 function clearSeasons() {
-  st.active && TS.keys.capture(false);
-  st.active = false;
   st.heads.forEach(function (h) { TS.dom.remove(h).catch(function () { }); });
   st.heads = [];
-  if (st.list) TS.dom.update(st.list, { removeClass: 'ext-seasons', style: { transform: '' } }).catch(function () { });
+  if (st.list) TS.dom.update(st.list, { removeClass: 'ext-seasons', style: { transform: '', top: '', 'clip-path': '' } }).catch(function () { });
   st.shift = 0;
   st.list = null;
   st.applied = '';
@@ -761,7 +777,7 @@ function clearSeasons() {
 function apply(gen) {
   if (gen !== st.gen) return;
   Promise.all([
-    TS.dom.query('#files-list', { limit: 1, text: false }),
+    TS.dom.query('#files-list', { limit: 1, rect: true, text: false }),
     TS.dom.query(ITEMS, { limit: 500, text: false })
   ]).then(function (r) {
     var list = r[0][0], items = r[1];
@@ -780,7 +796,8 @@ function apply(gen) {
     if (Object.keys(seasons).length < 2) return;
     st.applied = key;
     st.list = list.h;
-    var jobs = [TS.dom.update(list.h, { addClass: 'ext-seasons' })];
+    st.top = Math.max(0, Math.round(list.rect ? list.rect.y : 0));
+    var jobs = [TS.dom.update(list.h, { addClass: 'ext-seasons', style: { top: st.top + 'px' } })];
     var last = null;
     items.forEach(function (it, i) {
       var p = parsed[i];
@@ -826,18 +843,6 @@ TS.on('screen', function (s) {
 
 // ---- Пульт по сетке серий ----
 
-function arm() {
-  if (st.active || !st.applied) return;
-  st.active = true;
-  TS.keys.capture(true);
-}
-
-function release() {
-  if (!st.active) return;
-  st.active = false;
-  TS.keys.capture(false);
-}
-
 /** Сдвинуть сетку так, чтобы плитка под фокусом была на экране */
 function follow() {
   if (!st.list) return;
@@ -847,55 +852,53 @@ function follow() {
   ]).then(function (r) {
     var f = r[0], dv = r[1][0];
     if (!f || !f.rect || !/\bfile-item\b/.test(f.cls) || !dv) return;
-    var bottom = dv.rect.y + dv.rect.h - VIEW_BOTTOM_PAD;
+    var bottom = dv.rect.y + dv.rect.h - VIEW_BOTTOM_PAD, top = st.top + 8;
     var shift = st.shift;
     if (f.rect.y + f.rect.h > bottom) shift += f.rect.y + f.rect.h - bottom;
-    else if (f.rect.y < VIEW_TOP) shift -= VIEW_TOP - f.rect.y;
-    shift = Math.round(shift);
+    else if (f.rect.y < top) shift -= top - f.rect.y;
+    shift = Math.max(0, Math.round(shift));
     if (shift === st.shift) return;
     st.shift = shift;
-    return TS.dom.update(st.list, { style: { transform: shift ? 'translateY(' + (-shift) + 'px)' : '' } });
+    return TS.dom.update(st.list, { style: {
+      transform: shift ? 'translateY(' + (-shift) + 'px)' : '',
+      'clip-path': shift ? 'inset(' + shift + 'px 0 0 0)' : ''
+    } });
   }).catch(function () { });
 }
 
 function resetShift() {
   if (!st.list || !st.shift) return;
   st.shift = 0;
-  TS.dom.update(st.list, { style: { transform: '' } }).catch(function () { });
+  TS.dom.update(st.list, { style: { transform: '', 'clip-path': '' } }).catch(function () { });
 }
 
-function toPlayButton() {
-  resetShift();
-  release();
-  TS.dom.query('#detail-progress-btn', { limit: 1, text: false }).then(function (b) {
-    if (b[0] && b[0].visible) TS.dom.focus(b[0].h);
-  }).catch(function () { });
-}
+// Пульт остаётся у приложения: ОК по серии запускает её только само приложение
+// (нажимать плитки серий расширению нельзя), а захваченный пульт ОК до него не
+// пропускает. Влево/вправо приложение и так ведёт по порядку серий; вверх/вниз
+// поправляем после него — на плитку строкой выше/ниже (вверх с первой строки —
+// оставляем, куда увело приложение: на «Играть»)
+var prevItem = null;
 
 TS.on('nav', function (e) {
-  if (e.focused && /\bfile-item\b/.test(e.focused.cls)) arm();
-});
-
-TS.on('key', function (dir) {
-  if (!st.active) return false;
-  if (dir === 'back') {
-    // Пульт приложение уже забрало; оно же шлёт back при смене экрана
-    st.active = false;
-    toPlayButton();
-    return true;
+  var was = prevItem;
+  var onItem = e.focused && /\bfile-item\b/.test(e.focused.cls);
+  prevItem = onItem ? e.focused : null;
+  if (!st.applied) return;
+  if (!was || (e.key !== 'up' && e.key !== 'down')) {
+    if (onItem) setTimeout(follow, FOLLOW_MS);
+    if (!onItem && was && e.key === 'up') resetShift();
+    return;
   }
-  if (st.busy) return true;
-  st.busy = true;
   TS.dom.query(ITEMS, { limit: 500, rect: true, text: false }).then(function (items) {
     var cur = null;
-    for (var i = 0; i < items.length; i++) if (items[i].focused) { cur = items[i]; break; }
-    if (!cur) { release(); return; }
-    if (dir === 'enter') return TS.dom.click(cur.h);
-    var t = pick(items, cur, dir);
-    if (t === 'top') { toPlayButton(); return; }
-    if (t) return TS.dom.focus(t.h).then(function () { setTimeout(follow, FOLLOW_MS); });
-  }).then(function () { st.busy = false; }, function () { st.busy = false; });
-  return true;
+    for (var i = 0; i < items.length; i++) if (items[i].h === was.h) { cur = items[i]; break; }
+    if (!cur) return;
+    var t = pick(items, cur, e.key);
+    if (t === 'top') { resetShift(); return; }
+    if (!t) t = cur;                       // ниже некуда — остаёмся на месте
+    prevItem = t;
+    return TS.dom.focus(t.h).then(function () { setTimeout(follow, FOLLOW_MS); });
+  }).catch(function () { });
 });
 
 /** Соседняя плитка по направлению — по геометрии: строки сезонов разной длины */
