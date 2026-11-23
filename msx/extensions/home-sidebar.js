@@ -274,8 +274,9 @@ TS.on('nav', function (e) {
   if (menu) return;
   var w = wrapped(e);
   if (w) {
+    // Фокус возвращаем на прежнюю карточку и её же помним: следующее нажатие в ту же
+    // стену снова должно узнаваться
     var back = lastGridFocus;
-    lastGridFocus = null;
     var f = TS.dom.focus(back.h);
     if (w === 'left') f.then(open, open);
     return;
@@ -318,8 +319,9 @@ TS.ui.addStyle([
   '.home-row-next{display:none!important}',
   // Название плитки — целиком, до двух строк
   '#home-rows .catalog-row-card.home-card{height:auto!important}',
-  '#home-rows .home-tile-label{height:auto!important;white-space:normal!important;',
-  ' display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;line-height:1.25!important}'
+  '#home-rows .home-tile-label{height:auto!important;white-space:normal!important;font-size:2.6vh!important;',
+  ' display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;line-height:1.25!important;',
+  ' padding-top:.35em}'
 ].join('\n'));
 
 function rowsHandle() {

@@ -26,5 +26,7 @@ TS.ui.addStyle([
   ' white-space:normal!important;overflow:hidden;text-overflow:clip!important;',
   ' animation:none!important;transform:none!important}',
   '#catalog-grid .catalog-card .torrent-title{display:-webkit-box!important;-webkit-box-orient:vertical;',
-  ' -webkit-line-clamp:2;line-height:1.25}'
+  ' -webkit-line-clamp:2;line-height:1.25;font-size:2.6vh!important}',
+  // Карточка широкая — подписи крупнее, чем у вертикального постера
+  '#catalog-grid .catalog-card .catalog-card-sub{font-size:2.1vh!important}'
 ].join('\n'));
