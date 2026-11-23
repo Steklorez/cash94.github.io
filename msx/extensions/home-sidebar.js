@@ -171,17 +171,15 @@ function move(step) {
 function open() {
   if (menu || opening) return;
   opening = true;
-  Promise.all([TS.app.home(), TS.dom.query('#home-topbar .home-nav-btn')]).then(function (r) {
+  Promise.all([TS.app.home(), TS.dom.query('#home-topbar .home-nav-btn'), TS.app.screen()]).then(function (r) {
     var home = r[0], nav = r[1];
     if (!home.ready) { opening = false; return; }
-    return loadTileIcons(home).then(function (icons) { return { home: home, nav: nav, icons: icons }; });
+    return loadTileIcons(home).then(function (icons) { return { home: home, nav: nav, icons: icons, screen: r[2] }; });
   }).then(function (r) {
     if (!r) return;
     var home = r.home;
     var items = buildItems(home, r.nav, r.icons);
-    var sel = 0;
-    items.forEach(function (it, i) { if (it.cur) sel = i; });
-    while (items[sel] && items[sel].group) sel++;
+    var sel = pickCurrent(items, r.screen);
     return TS.dom.create(
       '<aside id="ext-sb"><div class="sb-list"></div>' +
       '<div class="sb-hint">OK — перейти · ▶ или «Назад» — закрыть</div></aside>'
@@ -197,6 +195,34 @@ function open() {
   }).catch(function () { opening = false; });
 }
 
+// Последний выбранный пункт меню — чтобы меню открывалось там, где вы сейчас. Подборку
+// главной меню узнаёт само (показанный ряд), а категорию каталога — нет: каталог не
+// говорит, какая плитка его открыла
+var LAST_PICK = 'lastPick';
+
+function pickKey(it) { return (it.tile ? 'tile:' : 'item:') + it.name; }
+
+/** Пункт, на котором открыть меню: в каталоге — последняя выбранная категория, на главной — показанная подборка */
+function pickCurrent(items, screen) {
+  var last = TS.storage.get(LAST_PICK, ''), cur = -1, picked = -1;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].group) continue;
+    if (items[i].cur && cur < 0) cur = i;
+    if (last && pickKey(items[i]) === last) picked = i;
+  }
+  if (screen === 'catalog' && picked >= 0 && items[picked].tile) {
+    // Каталог открыт этой категорией: отмечаем её текущей, а подборку главной — нет
+    if (cur >= 0) items[cur].cur = false;
+    items[picked].cur = true;
+    return picked;
+  }
+  if (cur >= 0) return cur;
+  if (picked >= 0) return picked;
+  var first = 0;
+  while (items[first] && items[first].group) first++;
+  return first;
+}
+
 function close(go) {
   if (!menu) return;
   var m = menu;
@@ -208,6 +234,7 @@ function close(go) {
   if (!go) return;
   var it = m.items[m.sel];
   if (!it || !it.h) return;
+  TS.storage.set(LAST_PICK, pickKey(it));
   // Разделы шапки нажимаются с любого экрана
   if (it.click && !it.tile) { TS.dom.click(it.h); return; }
   TS.app.screen().then(function (s) {
